@@ -1,0 +1,3 @@
+-- DDMoney seed data
+-- DataInitializer.java sẽ tự động seed categories và wallets
+-- File này để trống, chỉ dùng nếu cần INSERT thủ công
