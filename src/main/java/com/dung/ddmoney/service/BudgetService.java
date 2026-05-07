@@ -23,9 +23,16 @@ public class BudgetService {
     private final BudgetRepository budgetRepository;
     private final CategoryRepository categoryRepository;
     private final TransactionService transactionService;
+    private final com.dung.ddmoney.repository.UserRepository userRepository;
+    private final com.dung.ddmoney.util.SecurityUtils securityUtils;
+
+    private com.dung.ddmoney.entity.User getCurrentUser() {
+        return userRepository.findByEmail(com.dung.ddmoney.util.SecurityUtils.getCurrentUserEmail())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+    }
 
     public List<BudgetDto.Response> getByMonthYear(int month, int year) {
-        List<Budget> budgets = budgetRepository.findByMonthAndYearOrdered(month, year);
+        List<Budget> budgets = budgetRepository.findByUserIdAndMonthAndYearOrdered(getCurrentUser().getId(), month, year);
 
         // Get spending for this month
         List<TransactionDto.CategorySpending> spending = transactionService.getCategorySpending(month, year);
@@ -53,8 +60,9 @@ public class BudgetService {
 
         // Upsert: if exists for this category/month/year, update amount
         Budget budget = budgetRepository
-                .findByCategoryIdAndMonthAndYear(req.getCategoryId(), req.getMonth(), req.getYear())
+                .findByUserIdAndCategoryIdAndMonthAndYear(getCurrentUser().getId(), req.getCategoryId(), req.getMonth(), req.getYear())
                 .orElse(Budget.builder()
+                        .user(getCurrentUser())
                         .category(cat)
                         .month(req.getMonth())
                         .year(req.getYear())
@@ -78,7 +86,11 @@ public class BudgetService {
     }
 
     private Budget findOrThrow(Long id) {
-        return budgetRepository.findById(id)
+        Budget budget = budgetRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy ngân sách id=" + id));
+        if (!budget.getUser().getId().equals(getCurrentUser().getId())) {
+            throw new RuntimeException("Không có quyền truy cập ngân sách này");
+        }
+        return budget;
     }
 }

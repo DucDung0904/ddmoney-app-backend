@@ -32,28 +32,6 @@ public class TransactionController {
         return transactionService.getById(id);
     }
 
-    // GET /api/transactions/summary?month=4&year=2026
-    @GetMapping("/summary")
-    public TransactionDto.Summary getSummary(
-            @RequestParam(value = "month", defaultValue = "#{T(java.time.LocalDate).now().getMonthValue()}") int month,
-            @RequestParam(value = "year", defaultValue = "#{T(java.time.LocalDate).now().getYear()}") int year) {
-        return transactionService.getMonthlySummary(month, year);
-    }
-
-    // GET /api/transactions/monthly-chart?months=4
-    @GetMapping("/monthly-chart")
-    public List<TransactionDto.MonthlyChart> getMonthlyChart(
-            @RequestParam(value = "months", defaultValue = "4") int months) {
-        return transactionService.getMonthlyChart(months);
-    }
-
-    // GET /api/transactions/category-spending?month=4&year=2026
-    @GetMapping("/category-spending")
-    public List<TransactionDto.CategorySpending> getCategorySpending(
-            @RequestParam(value = "month", defaultValue = "#{T(java.time.LocalDate).now().getMonthValue()}") int month,
-            @RequestParam(value = "year", defaultValue = "#{T(java.time.LocalDate).now().getYear()}") int year) {
-        return transactionService.getCategorySpending(month, year);
-    }
 
     @PostMapping
     public ResponseEntity<TransactionDto.Response> create(@Valid @RequestBody TransactionDto.Request req) {

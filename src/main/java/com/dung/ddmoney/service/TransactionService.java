@@ -136,8 +136,8 @@ public class TransactionService {
     public TransactionDto.Summary getMonthlySummary(int month, int year) {
         Object[] raw = transactionRepository.getMonthlySummaryByUserId(getCurrentUser().getId(), month, year);
         TransactionDto.Summary s = new TransactionDto.Summary();
-        s.setTotalIncome((BigDecimal) raw[0]);
-        s.setTotalExpense((BigDecimal) raw[1]);
+        s.setTotalIncome(toBigDecimal(raw[0]));
+        s.setTotalExpense(toBigDecimal(raw[1]));
         s.setBalance(s.getTotalIncome().subtract(s.getTotalExpense()));
         s.setMonth(month);
         s.setYear(year);
@@ -150,10 +150,10 @@ public class TransactionService {
         List<TransactionDto.MonthlyChart> result = new ArrayList<>();
         for (Object[] row : raw) {
             TransactionDto.MonthlyChart c = new TransactionDto.MonthlyChart();
-            c.setMonth((Integer) row[0]);
-            c.setYear((Integer) row[1]);
-            c.setIncome((BigDecimal) row[2]);
-            c.setExpense((BigDecimal) row[3]);
+            c.setMonth(((Number) row[0]).intValue());
+            c.setYear(((Number) row[1]).intValue());
+            c.setIncome(toBigDecimal(row[2]));
+            c.setExpense(toBigDecimal(row[3]));
             // Label: "T1", "T2" ...
             c.setMonthLabel("T" + row[0]);
             result.add(c);
@@ -164,12 +164,12 @@ public class TransactionService {
     public List<TransactionDto.CategorySpending> getCategorySpending(int month, int year) {
         List<Object[]> raw = transactionRepository.getCategorySpendingByUserId(getCurrentUser().getId(), month, year);
         BigDecimal total = raw.stream()
-                .map(r -> (BigDecimal) r[1])
+                .map(r -> toBigDecimal(r[1]))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         return raw.stream().map(r -> {
-            Long catId = (Long) r[0];
-            BigDecimal amount = (BigDecimal) r[1];
+            Long catId = ((Number) r[0]).longValue();
+            BigDecimal amount = toBigDecimal(r[1]);
             TransactionDto.CategorySpending cs = new TransactionDto.CategorySpending();
             cs.setCategoryId(catId);
             cs.setAmount(amount);
@@ -201,5 +201,11 @@ public class TransactionService {
             throw new RuntimeException("Không có quyền truy cập giao dịch này");
         }
         return tx;
+    }
+
+    private BigDecimal toBigDecimal(Object val) {
+        if (val == null) return BigDecimal.ZERO;
+        if (val instanceof BigDecimal) return (BigDecimal) val;
+        return new BigDecimal(val.toString());
     }
 }
