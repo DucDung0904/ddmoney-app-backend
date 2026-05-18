@@ -47,6 +47,11 @@ public class WalletController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/{id}/restore")
+    public WalletDto.Response restore(@PathVariable("id") Long id) {
+        return walletService.restore(id);
+    }
+
     @PostMapping("/transfer")
     public ResponseEntity<Map<String, String>> transfer(@Valid @RequestBody WalletDto.TransferRequest req) {
         walletService.transfer(req.getFromWalletId(), req.getToWalletId(), req.getAmount());

@@ -4,68 +4,158 @@ import com.dung.ddmoney.entity.Transaction;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
+@Repository
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
-
-    // All transactions sorted by date desc
     List<Transaction> findByUserIdOrderByDateDescCreatedAtDesc(Long userId);
 
-    // By month + year
-    @Query("""
-        SELECT t FROM Transaction t
-        WHERE t.user.id = :userId AND MONTH(t.date) = :month AND YEAR(t.date) = :year
-        ORDER BY t.date DESC, t.createdAt DESC
-    """)
-    List<Transaction> findByUserIdAndMonthAndYear(@Param("userId") Long userId, @Param("month") int month, @Param("year") int year);
+    List<Transaction> findByUserIdAndDateBetweenOrderByDateDescCreatedAtDesc(
+            Long userId, LocalDate startDate, LocalDate endDate);
 
-    // By type + month + year
-    @Query("""
-        SELECT t FROM Transaction t
-        WHERE t.user.id = :userId AND t.type = :type
-          AND MONTH(t.date) = :month AND YEAR(t.date) = :year
-        ORDER BY t.date DESC
-    """)
-    List<Transaction> findByUserIdAndTypeAndMonthYear(
-        @Param("userId") Long userId,
-        @Param("type") Transaction.TransactionType type,
-        @Param("month") int month,
-        @Param("year") int year
-    );
+    List<Transaction> findByUserIdAndTypeAndDateBetweenOrderByDateDescCreatedAtDesc(
+            Long userId, Transaction.TransactionType type, LocalDate startDate, LocalDate endDate);
 
-    // Sum income/expense per month for chart (last N months)
     @Query("""
-        SELECT MONTH(t.date), YEAR(t.date),
-               SUM(CASE WHEN t.type = 'INCOME' THEN t.amount ELSE 0 END),
-               SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount ELSE 0 END)
-        FROM Transaction t
-        WHERE t.user.id = :userId AND t.date >= :from
-          AND t.type IN ('INCOME', 'EXPENSE')
-        GROUP BY YEAR(t.date), MONTH(t.date)
-        ORDER BY YEAR(t.date), MONTH(t.date)
-    """)
-    List<Object[]> findMonthlyChartDataByUserId(@Param("userId") Long userId, @Param("from") LocalDate from);
+            SELECT t FROM Transaction t
+            WHERE t.user.id = :userId
+              AND MONTH(t.date) = :month
+              AND YEAR(t.date) = :year
+            ORDER BY t.date DESC, t.createdAt DESC
+            """)
+    List<Transaction> findByUserIdAndMonthAndYear(@Param("userId") Long userId,
+                                                  @Param("month") Integer month,
+                                                  @Param("year") Integer year);
 
-    // Summary for current month
     @Query("""
-        SELECT
-            COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount ELSE 0 END), 0)
-        FROM Transaction t
-        WHERE t.user.id = :userId AND MONTH(t.date) = :month AND YEAR(t.date) = :year
-    """)
-    Object[] getMonthlySummaryByUserId(@Param("userId") Long userId, @Param("month") int month, @Param("year") int year);
+            SELECT t.category.name, SUM(t.amount)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.type = :type
+              AND MONTH(t.date) = :month
+              AND YEAR(t.date) = :year
+            GROUP BY t.category.name
+            """)
+    List<Object[]> getCategorySpending(@Param("userId") Long userId,
+                                       @Param("type") Transaction.TransactionType type,
+                                       @Param("month") Integer month,
+                                       @Param("year") Integer year);
 
-    // Category spending for current month
     @Query("""
-        SELECT t.category.id, SUM(t.amount)
-        FROM Transaction t
-        WHERE t.user.id = :userId AND t.type = 'EXPENSE'
-          AND MONTH(t.date) = :month AND YEAR(t.date) = :year
-        GROUP BY t.category.id
-        ORDER BY SUM(t.amount) DESC
-    """)
-    List<Object[]> getCategorySpendingByUserId(@Param("userId") Long userId, @Param("month") int month, @Param("year") int year);
+            SELECT SUM(CASE WHEN t.type = 'INCOME' THEN t.amount ELSE 0 END),
+                   SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount ELSE 0 END)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND MONTH(t.date) = :month
+              AND YEAR(t.date) = :year
+            """)
+    Object[] getMonthlySummary(@Param("userId") Long userId,
+                               @Param("month") Integer month,
+                               @Param("year") Integer year);
+
+    @Query("""
+            SELECT MONTH(t.date), SUM(CASE WHEN t.type = 'INCOME' THEN t.amount ELSE 0 END),
+                   SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount ELSE 0 END)
+            FROM Transaction t
+            WHERE t.user.id = :userId AND YEAR(t.date) = :year
+            GROUP BY MONTH(t.date)
+            ORDER BY MONTH(t.date)
+            """)
+    List<Object[]> getYearlyChart(@Param("userId") Long userId, @Param("year") Integer year);
+
+    @Query("""
+            SELECT COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount ELSE 0 END), 0)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND MONTH(t.date) = :month
+              AND YEAR(t.date) = :year
+            """)
+    Object[] getMonthlySummaryByUserId(@Param("userId") Long userId,
+                                       @Param("month") Integer month,
+                                       @Param("year") Integer year);
+
+    @Query("""
+            SELECT MONTH(t.date), YEAR(t.date),
+                   COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount ELSE 0 END), 0)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.date >= :fromDate
+            GROUP BY YEAR(t.date), MONTH(t.date)
+            ORDER BY YEAR(t.date), MONTH(t.date)
+            """)
+    List<Object[]> findMonthlyChartDataByUserId(@Param("userId") Long userId,
+                                                @Param("fromDate") LocalDate fromDate);
+
+    @Query("""
+            SELECT t.category.id, COALESCE(SUM(t.amount), 0)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.type = 'EXPENSE'
+              AND MONTH(t.date) = :month
+              AND YEAR(t.date) = :year
+            GROUP BY t.category.id
+            ORDER BY COALESCE(SUM(t.amount), 0) DESC
+            """)
+    List<Object[]> getCategorySpendingByUserId(@Param("userId") Long userId,
+                                               @Param("month") Integer month,
+                                               @Param("year") Integer year);
+
+    @Query("""
+            SELECT COALESCE(SUM(t.amount), 0)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.type = :type
+              AND t.date BETWEEN :startDate AND :endDate
+              AND (:categoryId IS NULL OR t.category.id = :categoryId)
+              AND (:walletId IS NULL OR t.wallet.id = :walletId)
+              AND (:walletId IS NOT NULL OR (t.wallet.isActive = true AND t.wallet.isArchived = false))
+            """)
+    BigDecimal sumExpenseForBudget(@Param("userId") Long userId,
+                                   @Param("type") Transaction.TransactionType type,
+                                   @Param("startDate") LocalDate startDate,
+                                   @Param("endDate") LocalDate endDate,
+                                   @Param("categoryId") Long categoryId,
+                                   @Param("walletId") Long walletId);
+
+    @Query("""
+            SELECT t FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.type = :type
+              AND t.date BETWEEN :startDate AND :endDate
+              AND (:categoryId IS NULL OR t.category.id = :categoryId)
+              AND (:walletId IS NULL OR t.wallet.id = :walletId)
+              AND (:walletId IS NOT NULL OR (t.wallet.isActive = true AND t.wallet.isArchived = false))
+            ORDER BY t.date DESC, t.createdAt DESC
+            """)
+    List<Transaction> findExpensesForBudget(@Param("userId") Long userId,
+                                            @Param("type") Transaction.TransactionType type,
+                                            @Param("startDate") LocalDate startDate,
+                                            @Param("endDate") LocalDate endDate,
+                                            @Param("categoryId") Long categoryId,
+                                            @Param("walletId") Long walletId);
+
+    @Query("""
+            SELECT t.category.id, t.category.name, t.category.icon, t.category.colorHex, COALESCE(SUM(t.amount), 0)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.type = :type
+              AND t.date BETWEEN :startDate AND :endDate
+              AND (:categoryId IS NULL OR t.category.id = :categoryId)
+              AND (:walletId IS NULL OR t.wallet.id = :walletId)
+              AND (:walletId IS NOT NULL OR (t.wallet.isActive = true AND t.wallet.isArchived = false))
+            GROUP BY t.category.id, t.category.name, t.category.icon, t.category.colorHex
+            ORDER BY COALESCE(SUM(t.amount), 0) DESC
+            """)
+    List<Object[]> sumExpenseGroupByCategoryForBudget(@Param("userId") Long userId,
+                                                      @Param("type") Transaction.TransactionType type,
+                                                      @Param("startDate") LocalDate startDate,
+                                                      @Param("endDate") LocalDate endDate,
+                                                      @Param("categoryId") Long categoryId,
+                                                      @Param("walletId") Long walletId);
 }

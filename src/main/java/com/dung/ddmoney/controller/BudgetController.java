@@ -4,9 +4,18 @@ import com.dung.ddmoney.dto.BudgetDto;
 import com.dung.ddmoney.service.BudgetService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import java.time.LocalDate;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
 import java.util.List;
 
 @RestController
@@ -16,29 +25,37 @@ public class BudgetController {
 
     private final BudgetService budgetService;
 
-    // GET /api/budgets?month=4&year=2026
     @GetMapping
-    public List<BudgetDto.Response> getAll(
-            @RequestParam(value = "month", defaultValue = "0") int month,
-            @RequestParam(value = "year", defaultValue = "0") int year) {
-        if (month == 0) month = LocalDate.now().getMonthValue();
-        if (year == 0) year = LocalDate.now().getYear();
-        return budgetService.getByMonthYear(month, year);
+    public ResponseEntity<List<BudgetDto.Response>> getBudgets(
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) Integer year) {
+        return ResponseEntity.ok(budgetService.getBudgets(month, year));
+    }
+
+    @GetMapping("/current")
+    public ResponseEntity<List<BudgetDto.Response>> getCurrentBudgets() {
+        return ResponseEntity.ok(budgetService.getCurrentBudgets());
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<BudgetDto.DetailResponse> getBudgetDetail(@PathVariable Long id) {
+        return ResponseEntity.ok(budgetService.getBudgetDetail(id));
     }
 
     @PostMapping
-    public ResponseEntity<BudgetDto.Response> create(@Valid @RequestBody BudgetDto.Request req) {
-        return ResponseEntity.status(201).body(budgetService.create(req));
+    public ResponseEntity<BudgetDto.Response> createBudget(@Valid @RequestBody BudgetDto.Request request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(budgetService.createBudget(request));
     }
 
     @PutMapping("/{id}")
-    public BudgetDto.Response update(@PathVariable("id") Long id, @Valid @RequestBody BudgetDto.Request req) {
-        return budgetService.update(id, req);
+    public ResponseEntity<BudgetDto.Response> updateBudget(@PathVariable Long id,
+                                                           @Valid @RequestBody BudgetDto.Request request) {
+        return ResponseEntity.ok(budgetService.updateBudget(id, request));
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable("id") Long id) {
-        budgetService.delete(id);
+    public ResponseEntity<Void> deleteBudget(@PathVariable Long id) {
+        budgetService.deleteBudget(id);
         return ResponseEntity.noContent().build();
     }
 }

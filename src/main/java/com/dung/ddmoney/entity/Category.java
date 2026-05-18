@@ -20,7 +20,7 @@ public class Category {
     @Column(nullable = false, length = 100)
     private String name;
 
-    @Column(length = 10)
+    @Column(length = 64)
     @Builder.Default
     private String icon = "📦";
 

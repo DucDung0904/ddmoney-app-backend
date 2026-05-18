@@ -1,14 +1,11 @@
 package com.dung.ddmoney.config;
 
 import com.dung.ddmoney.entity.Category;
-import com.dung.ddmoney.entity.Wallet;
 import com.dung.ddmoney.repository.CategoryRepository;
-import com.dung.ddmoney.repository.WalletRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
-import java.math.BigDecimal;
 import java.util.List;
 
 @Component
@@ -17,12 +14,10 @@ import java.util.List;
 public class DataInitializer implements CommandLineRunner {
 
     private final CategoryRepository categoryRepository;
-    private final WalletRepository walletRepository;
 
     @Override
     public void run(String... args) {
         initCategories();
-        initDefaultWallet();
     }
 
     private void initCategories() {
@@ -59,21 +54,6 @@ public class DataInitializer implements CommandLineRunner {
         defaults.forEach(c -> c.setIsDefault(true));
         categoryRepository.saveAll(defaults);
         log.info(">> Đã tạo {} danh mục mặc định", defaults.size());
-    }
-
-    private void initDefaultWallet() {
-        if (walletRepository.count() > 0) return;
-
-        log.info(">> Khởi tạo ví mặc định...");
-
-        List<Wallet> wallets = List.of(
-            Wallet.builder().name("Tiền mặt").balance(BigDecimal.ZERO)
-                .type(Wallet.WalletType.CASH).colorHex("#4659A6").build(),
-            Wallet.builder().name("Ngân hàng").balance(BigDecimal.ZERO)
-                .type(Wallet.WalletType.BANK).bankName("Vietcombank").colorHex("#003CC7").build()
-        );
-        walletRepository.saveAll(wallets);
-        log.info(">> Đã tạo {} ví mặc định", wallets.size());
     }
 
     private Category cat(String name, String icon, String color, Category.CategoryType type) {

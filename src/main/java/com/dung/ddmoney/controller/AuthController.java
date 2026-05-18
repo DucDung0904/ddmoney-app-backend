@@ -3,9 +3,12 @@ package com.dung.ddmoney.controller;
 import com.dung.ddmoney.config.JwtUtil;
 import com.dung.ddmoney.dto.AuthRequest;
 import com.dung.ddmoney.dto.AuthResponse;
+import com.dung.ddmoney.dto.GoogleLoginRequest;
 import com.dung.ddmoney.dto.RegisterRequest;
+import com.dung.ddmoney.dto.UserResponse;
 import com.dung.ddmoney.entity.User;
 import com.dung.ddmoney.repository.UserRepository;
+import com.dung.ddmoney.service.GoogleAuthService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -40,6 +43,9 @@ public class AuthController {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private GoogleAuthService googleAuthService;
+
     @PostMapping("/login")
     public ResponseEntity<?> createAuthenticationToken(@Valid @RequestBody AuthRequest authRequest) throws Exception {
         try {
@@ -54,10 +60,18 @@ public class AuthController {
 
         final UserDetails userDetails = userDetailsService.loadUserByUsername(authRequest.getEmail());
         final String jwt = jwtUtil.generateToken(userDetails);
+        final String refreshToken = jwtUtil.generateRefreshToken(userDetails);
         
         User user = userRepository.findByEmail(authRequest.getEmail()).get();
 
-        return ResponseEntity.ok(new AuthResponse(jwt, user.getId(), user.getFullName(), user.getEmail()));
+        if (!user.isEnabled()) {
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Account is disabled");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+        }
+
+        UserResponse userResponse = new UserResponse(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl());
+        return ResponseEntity.ok(new AuthResponse(jwt, refreshToken, userResponse));
     }
 
     @PostMapping("/register")
@@ -80,5 +94,44 @@ public class AuthController {
         Map<String, String> response = new HashMap<>();
         response.put("message", "User registered successfully!");
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/google")
+    public ResponseEntity<?> loginWithGoogle(@Valid @RequestBody GoogleLoginRequest request) {
+        try {
+            if (request.getIdToken() == null || request.getIdToken().trim().isEmpty()) {
+                Map<String, String> response = new HashMap<>();
+                response.put("message", "Token is empty");
+                return ResponseEntity.badRequest().body(response);
+            }
+
+            User user = googleAuthService.verifyGoogleTokenAndGetUser(request.getIdToken());
+            
+            final UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
+            final String jwt = jwtUtil.generateToken(userDetails);
+            final String refreshToken = jwtUtil.generateRefreshToken(userDetails);
+
+            UserResponse userResponse = new UserResponse(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl());
+            return ResponseEntity.ok(new AuthResponse(jwt, refreshToken, userResponse));
+            
+        } catch (RuntimeException e) {
+            try {
+                java.nio.file.Files.writeString(java.nio.file.Paths.get("backend_error.log"), "RuntimeException: " + e.getMessage());
+            } catch (Exception ex) {}
+            Map<String, String> response = new HashMap<>();
+            response.put("message", e.getMessage());
+            
+            if (e.getMessage().contains("disabled")) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+            }
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+        } catch (Exception e) {
+            try {
+                java.nio.file.Files.writeString(java.nio.file.Paths.get("backend_error.log"), "Exception: " + e.getMessage());
+            } catch (Exception ex) {}
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Authentication failed: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+        }
     }
 }

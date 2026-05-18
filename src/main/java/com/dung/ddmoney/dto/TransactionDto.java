@@ -6,6 +6,8 @@ import jakarta.validation.constraints.Positive;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 public class TransactionDto {
 
@@ -56,6 +58,8 @@ public class TransactionDto {
         // Transfer destination
         private Long transferToWalletId;
         private String transferToWalletName;
+
+        private List<BudgetDto.Response> budgetWarnings = new ArrayList<>();
 
         public static Response from(Transaction t) {
             Response r = new Response();

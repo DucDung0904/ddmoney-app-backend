@@ -29,10 +29,16 @@ public class TransactionService {
     private final WalletRepository walletRepository;
     private final CategoryRepository categoryRepository;
     private final UserRepository userRepository;
+    private final BudgetService budgetService;
 
     private User getCurrentUser() {
         return userRepository.findByEmail(SecurityUtils.getCurrentUserEmail())
                 .orElseThrow(() -> new RuntimeException("User not found"));
+    }
+    private void attachBudgetWarnings(Transaction transaction, TransactionDto.Response response) {
+        if (transaction.getType() == Transaction.TransactionType.EXPENSE) {
+            response.setBudgetWarnings(budgetService.findImpactedBudgetWarnings(transaction));
+        }
     }
 
     public List<TransactionDto.Response> getAll() {
@@ -51,10 +57,12 @@ public class TransactionService {
 
     @Transactional
     public TransactionDto.Response create(TransactionDto.Request req) {
+        User user = getCurrentUser();
         Wallet wallet = walletRepository.findById(req.getWalletId())
-                .orElseThrow(() -> new RuntimeException("Ví không tồn tại"));
+                .orElseThrow(() -> new RuntimeException("Vi khong ton tai"));
+        assertWalletUsable(wallet, user);
         Category category = categoryRepository.findById(req.getCategoryId())
-                .orElseThrow(() -> new RuntimeException("Danh mục không tồn tại"));
+                .orElseThrow(() -> new RuntimeException("Danh muc khong ton tai"));
 
         String title = (req.getTitle() != null && !req.getTitle().isBlank())
                 ? req.getTitle() : category.getName();
@@ -67,13 +75,14 @@ public class TransactionService {
                 .note(req.getNote())
                 .wallet(wallet)
                 .category(category)
-                .user(getCurrentUser())
+                .user(user)
                 .build();
 
         // Handle transfer destination
         if (req.getType() == Transaction.TransactionType.TRANSFER && req.getTransferToWalletId() != null) {
             Wallet toWallet = walletRepository.findById(req.getTransferToWalletId())
-                    .orElseThrow(() -> new RuntimeException("Ví đích không tồn tại"));
+                    .orElseThrow(() -> new RuntimeException("Vi dich khong ton tai"));
+            assertWalletUsable(toWallet, user);
             tx.setTransferToWallet(toWallet);
             // Adjust balances
             wallet.setBalance(wallet.getBalance().subtract(req.getAmount()));
@@ -88,7 +97,10 @@ public class TransactionService {
             walletRepository.save(wallet);
         }
 
-        return TransactionDto.Response.from(transactionRepository.save(tx));
+        Transaction saved = transactionRepository.save(tx);
+        TransactionDto.Response response = TransactionDto.Response.from(saved);
+        attachBudgetWarnings(saved, response);
+        return response;
     }
 
     @Transactional
@@ -99,10 +111,12 @@ public class TransactionService {
         reverseBalance(tx);
 
         // Apply new values
+        User user = getCurrentUser();
         Wallet newWallet = walletRepository.findById(req.getWalletId())
-                .orElseThrow(() -> new RuntimeException("Ví không tồn tại"));
+                .orElseThrow(() -> new RuntimeException("Vi khong ton tai"));
+        assertWalletUsable(newWallet, user);
         Category newCategory = categoryRepository.findById(req.getCategoryId())
-                .orElseThrow(() -> new RuntimeException("Danh mục không tồn tại"));
+                .orElseThrow(() -> new RuntimeException("Danh muc khong ton tai"));
 
         String title = (req.getTitle() != null && !req.getTitle().isBlank())
                 ? req.getTitle() : newCategory.getName();
@@ -121,7 +135,10 @@ public class TransactionService {
         newWallet.setBalance(newWallet.getBalance().add(delta));
         walletRepository.save(newWallet);
 
-        return TransactionDto.Response.from(transactionRepository.save(tx));
+        Transaction saved = transactionRepository.save(tx);
+        TransactionDto.Response response = TransactionDto.Response.from(saved);
+        attachBudgetWarnings(saved, response);
+        return response;
     }
 
     @Transactional
@@ -194,6 +211,15 @@ public class TransactionService {
         walletRepository.save(tx.getWallet());
     }
 
+
+    private void assertWalletUsable(Wallet wallet, User user) {
+        if (wallet.getUser() == null || !wallet.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("Khong co quyen truy cap vi nay");
+        }
+        if (!Boolean.TRUE.equals(wallet.getIsActive()) || Boolean.TRUE.equals(wallet.getIsArchived())) {
+            throw new IllegalArgumentException("Vi da bi luu tru hoac khong con hoat dong");
+        }
+    }
     private Transaction findOrThrow(Long id) {
         Transaction tx = transactionRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy giao dịch id=" + id));
