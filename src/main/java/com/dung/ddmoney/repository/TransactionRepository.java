@@ -158,4 +158,61 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
                                                       @Param("endDate") LocalDate endDate,
                                                       @Param("categoryId") Long categoryId,
                                                       @Param("walletId") Long walletId);
+
+    @Query("""
+            SELECT COALESCE(SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount ELSE 0 END), 0),
+                   COUNT(t)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.date BETWEEN :fromDate AND :toDate
+            """)
+    Object[] getExpenseBookSummary(@Param("userId") Long userId,
+                                   @Param("fromDate") LocalDate fromDate,
+                                   @Param("toDate") LocalDate toDate);
+
+    @Query("""
+            SELECT t FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.date BETWEEN :fromDate AND :toDate
+              AND (:type IS NULL OR t.type = :type)
+              AND (:categoryId IS NULL OR t.category.id = :categoryId)
+              AND (:walletId IS NULL OR t.wallet.id = :walletId)
+            ORDER BY t.date DESC, t.createdAt DESC
+            """)
+    List<Transaction> findExpenseBookTransactions(@Param("userId") Long userId,
+                                                  @Param("fromDate") LocalDate fromDate,
+                                                  @Param("toDate") LocalDate toDate,
+                                                  @Param("type") Transaction.TransactionType type,
+                                                  @Param("categoryId") Long categoryId,
+                                                  @Param("walletId") Long walletId);
+
+    @Query("""
+            SELECT t.category.id, t.category.name, t.category.icon, t.category.colorHex,
+                   COALESCE(SUM(t.amount), 0)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.type = 'EXPENSE'
+              AND t.date BETWEEN :fromDate AND :toDate
+            GROUP BY t.category.id, t.category.name, t.category.icon, t.category.colorHex
+            ORDER BY COALESCE(SUM(t.amount), 0) DESC
+            """)
+    List<Object[]> getExpenseBookCategoryStatistics(@Param("userId") Long userId,
+                                                    @Param("fromDate") LocalDate fromDate,
+                                                    @Param("toDate") LocalDate toDate);
+
+    @Query("""
+            SELECT t.date,
+                   COALESCE(SUM(CASE WHEN t.type = 'EXPENSE' THEN t.amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN t.type = 'INCOME' THEN t.amount ELSE 0 END), 0),
+                   COUNT(t)
+            FROM Transaction t
+            WHERE t.user.id = :userId
+              AND t.date BETWEEN :fromDate AND :toDate
+            GROUP BY t.date
+            ORDER BY t.date DESC
+            """)
+    List<Object[]> getExpenseBookDailySummary(@Param("userId") Long userId,
+                                              @Param("fromDate") LocalDate fromDate,
+                                              @Param("toDate") LocalDate toDate);
 }

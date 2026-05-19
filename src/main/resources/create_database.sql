@@ -255,6 +255,15 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transactions' AND INDEX_NAME = 'idx_transactions_budget_calc') = 0, 'CREATE INDEX idx_transactions_budget_calc ON transactions(user_id, type, date, category_id, wallet_id)', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+-- Expense Book screen uses the existing transactions/categories/wallets tables.
+-- No dedicated expense_book table is needed; these indexes keep range summary,
+-- daily grouping, category statistics, and filtered transaction queries fast.
+SET @ddl = IF((SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transactions' AND INDEX_NAME = 'idx_transactions_expense_book_range') = 0, 'CREATE INDEX idx_transactions_expense_book_range ON transactions(user_id, date, type, category_id, wallet_id)', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl = IF((SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transactions' AND INDEX_NAME = 'idx_transactions_expense_book_daily') = 0, 'CREATE INDEX idx_transactions_expense_book_daily ON transactions(user_id, date)', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
 CREATE TABLE IF NOT EXISTS budget_categories (
     budget_id BIGINT NOT NULL,
     category_id BIGINT NOT NULL,
