@@ -24,7 +24,11 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -38,10 +42,16 @@ public class BudgetService {
 
     public List<BudgetDto.Response> getBudgets(Integer month, Integer year) {
         User user = getCurrentUser();
-        LocalDate today = LocalDate.now();
-        int targetMonth = month != null ? month : today.getMonthValue();
-        int targetYear = year != null ? year : today.getYear();
-        return budgetRepository.findByUserIdAndMonthAndYearOrdered(user.getId(), targetMonth, targetYear)
+        if (month == null && year == null) {
+            return budgetRepository.findByUserIdAndActiveTrueOrderByStartDateDescNameAsc(user.getId())
+                    .stream()
+                    .map(this::toResponse)
+                    .toList();
+        }
+        if (month == null || year == null) {
+            throw new IllegalArgumentException("Tháng và năm phải được cung cấp cùng nhau");
+        }
+        return budgetRepository.findByUserIdAndMonthAndYearOrdered(user.getId(), month, year)
                 .stream()
                 .map(this::toResponse)
                 .toList();
@@ -75,13 +85,22 @@ public class BudgetService {
         validateAmount(request.getAmount());
 
         BudgetInput input = normalizeInput(request, user, null);
-        ensureNoDuplicate(user.getId(), input.category(), input.wallet(), input.startDate(), input.endDate(), null);
+        ensureNoDuplicate(
+                user.getId(),
+                input.categories(),
+                input.scope(),
+                input.periodType(),
+                input.startDate(),
+                input.endDate(),
+                null
+        );
 
         Budget budget = Budget.builder()
                 .user(user)
                 .name(request.getName().trim())
                 .amount(request.getAmount())
-                .category(input.category())
+                .category(input.categories().stream().findFirst().orElse(null))
+                .categories(new LinkedHashSet<>(input.categories()))
                 .wallet(input.wallet())
                 .scope(input.scope())
                 .walletScope(input.walletScope())
@@ -104,11 +123,23 @@ public class BudgetService {
         validateAmount(request.getAmount());
 
         BudgetInput input = normalizeInput(request, user, budget);
-        ensureNoDuplicate(user.getId(), input.category(), input.wallet(), input.startDate(), input.endDate(), id);
+        ensureNoDuplicate(
+                user.getId(),
+                input.categories(),
+                input.scope(),
+                input.periodType(),
+                input.startDate(),
+                input.endDate(),
+                id
+        );
+
+        budget.getCategories().clear();
+        budgetRepository.saveAndFlush(budget);
 
         budget.setName(request.getName().trim());
         budget.setAmount(request.getAmount());
-        budget.setCategory(input.category());
+        budget.setCategory(input.categories().stream().findFirst().orElse(null));
+        budget.getCategories().addAll(input.categories());
         budget.setWallet(input.wallet());
         budget.setScope(input.scope());
         budget.setWalletScope(input.walletScope());
@@ -161,9 +192,8 @@ public class BudgetService {
     }
 
     public BigDecimal calculateSpentAmount(Budget budget) {
-        Long categoryId = budget.getScope() == Budget.BudgetScope.CATEGORY && budget.getCategory() != null
-                ? budget.getCategory().getId()
-                : null;
+        boolean allCategories = budget.getScope() == Budget.BudgetScope.ALL_CATEGORIES;
+        List<Long> categoryIds = categoryFilterIds(budget);
         Long walletId = budget.getWalletScope() == Budget.WalletScope.ONE_WALLET && budget.getWallet() != null
                 ? budget.getWallet().getId()
                 : null;
@@ -173,7 +203,8 @@ public class BudgetService {
                 Transaction.TransactionType.EXPENSE,
                 budget.getStartDate(),
                 budget.getEndDate(),
-                categoryId,
+                categoryIds,
+                allCategories,
                 walletId
         );
         return total == null ? BigDecimal.ZERO : total.setScale(2, RoundingMode.HALF_UP);
@@ -198,10 +229,12 @@ public class BudgetService {
         return BudgetDto.Response.from(budget, calculateSpentAmount(budget));
     }
     private boolean isTransactionIncludedInBudget(Transaction transaction, Budget budget) {
+        Set<Long> selectedCategoryIds = selectedCategoryIds(budget);
         boolean categoryMatches = budget.getScope() == Budget.BudgetScope.ALL_CATEGORIES
-                || (budget.getCategory() != null
-                && transaction.getCategory() != null
-                && budget.getCategory().getId().equals(transaction.getCategory().getId()));
+                || (transaction.getCategory() != null
+                    && (selectedCategoryIds.contains(transaction.getCategory().getId())
+                        || (transaction.getCategory().getParent() != null
+                            && selectedCategoryIds.contains(transaction.getCategory().getParent().getId()))));
         boolean walletMatches = budget.getWalletScope() == Budget.WalletScope.ALL_WALLETS
                 || (budget.getWallet() != null
                 && transaction.getWallet() != null
@@ -210,9 +243,8 @@ public class BudgetService {
     }
 
     private List<BudgetDto.CategorySpendingResponse> getSpentByCategory(Budget budget, BigDecimal totalSpent) {
-        Long categoryId = budget.getScope() == Budget.BudgetScope.CATEGORY && budget.getCategory() != null
-                ? budget.getCategory().getId()
-                : null;
+        boolean allCategories = budget.getScope() == Budget.BudgetScope.ALL_CATEGORIES;
+        List<Long> categoryIds = categoryFilterIds(budget);
         Long walletId = budget.getWalletScope() == Budget.WalletScope.ONE_WALLET && budget.getWallet() != null
                 ? budget.getWallet().getId()
                 : null;
@@ -222,7 +254,8 @@ public class BudgetService {
                         Transaction.TransactionType.EXPENSE,
                         budget.getStartDate(),
                         budget.getEndDate(),
-                        categoryId,
+                        categoryIds,
+                        allCategories,
                         walletId
                 )
                 .stream()
@@ -245,9 +278,8 @@ public class BudgetService {
     }
 
     private List<TransactionDto.Response> findTransactionsForBudget(Budget budget) {
-        Long categoryId = budget.getScope() == Budget.BudgetScope.CATEGORY && budget.getCategory() != null
-                ? budget.getCategory().getId()
-                : null;
+        boolean allCategories = budget.getScope() == Budget.BudgetScope.ALL_CATEGORIES;
+        List<Long> categoryIds = categoryFilterIds(budget);
         Long walletId = budget.getWalletScope() == Budget.WalletScope.ONE_WALLET && budget.getWallet() != null
                 ? budget.getWallet().getId()
                 : null;
@@ -257,7 +289,8 @@ public class BudgetService {
                         Transaction.TransactionType.EXPENSE,
                         budget.getStartDate(),
                         budget.getEndDate(),
-                        categoryId,
+                        categoryIds,
+                        allCategories,
                         walletId
                 )
                 .stream()
@@ -273,16 +306,21 @@ public class BudgetService {
         Budget.RepeatType repeatType = resolveRepeatType(request, periodType, existingBudget);
         validateDateAndRepeat(dateRange.startDate(), dateRange.endDate(), periodType, repeatType);
 
-        Long categoryId = resolveCategoryId(request);
+        List<Long> categoryIds = resolveCategoryIds(request);
         Budget.BudgetScope scope = request.getScope() != null
                 ? request.getScope()
-                : categoryId == null ? Budget.BudgetScope.ALL_CATEGORIES : Budget.BudgetScope.CATEGORY;
-        Category category = null;
+                : categoryIds.isEmpty() ? Budget.BudgetScope.ALL_CATEGORIES : Budget.BudgetScope.CATEGORY;
+        List<Category> categories = List.of();
         if (scope == Budget.BudgetScope.CATEGORY) {
-            if (categoryId == null) {
+            if (categoryIds.isEmpty()) {
                 throw new IllegalArgumentException("Vui lòng chọn danh mục chi tiêu cho ngân sách");
             }
-            category = findAndValidateCategory(categoryId, user);
+            categories = categoryIds.stream()
+                    .map(categoryId -> findAndValidateCategory(categoryId, user))
+                    .toList();
+            categories = expandParentCategories(categories, user);
+        } else if (!categoryIds.isEmpty()) {
+            throw new IllegalArgumentException("Ngân sách tất cả danh mục không được kèm danh mục riêng");
         }
 
         Long walletId = request.getWalletId();
@@ -297,18 +335,18 @@ public class BudgetService {
             wallet = findAndValidateWallet(walletId, user);
         }
 
-        return new BudgetInput(category, wallet, scope, walletScope, periodType, repeatType,
+        return new BudgetInput(categories, wallet, scope, walletScope, periodType, repeatType,
                 dateRange.startDate(), dateRange.endDate());
     }
 
-    private Long resolveCategoryId(BudgetDto.Request request) {
-        if (request.getCategoryId() != null) {
-            return request.getCategoryId();
-        }
+    private List<Long> resolveCategoryIds(BudgetDto.Request request) {
         if (request.getCategoryIds() != null && !request.getCategoryIds().isEmpty()) {
-            return request.getCategoryIds().get(0);
+            return request.getCategoryIds().stream()
+                    .filter(java.util.Objects::nonNull)
+                    .distinct()
+                    .toList();
         }
-        return null;
+        return request.getCategoryId() == null ? List.of() : List.of(request.getCategoryId());
     }
 
     private DateRange resolveDateRange(BudgetDto.Request request, Budget.PeriodType periodType, Budget existingBudget) {
@@ -374,6 +412,12 @@ public class BudgetService {
         if (startDate.isAfter(endDate)) {
             throw new IllegalArgumentException("Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc");
         }
+        if (periodType != Budget.PeriodType.CUSTOM) {
+            DateRange expectedRange = currentDateRange(periodType, startDate);
+            if (!startDate.equals(expectedRange.startDate()) || !endDate.equals(expectedRange.endDate())) {
+                throw new IllegalArgumentException("Khoảng ngày không khớp với kỳ " + periodType);
+            }
+        }
         if (periodType == Budget.PeriodType.CUSTOM && repeatType != Budget.RepeatType.NONE) {
             throw new IllegalArgumentException("Ngân sách tùy chỉnh không hỗ trợ lặp lại");
         }
@@ -394,6 +438,24 @@ public class BudgetService {
         return category;
     }
 
+    private List<Category> expandParentCategories(List<Category> selectedCategories, User user) {
+        Set<Long> selectedIds = selectedCategories.stream()
+                .map(Category::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        LinkedHashSet<Category> expanded = new LinkedHashSet<>(selectedCategories);
+
+        categoryRepository.findAllByUserIdOrDefault(user.getId()).stream()
+                .filter(category -> category.getType() == Category.CategoryType.EXPENSE)
+                .filter(category -> category.getParent() != null)
+                .filter(category -> selectedIds.contains(category.getParent().getId()))
+                .sorted(Comparator.comparing(
+                        Category::getSortOrder,
+                        Comparator.nullsLast(Integer::compareTo)
+                ).thenComparing(Category::getName))
+                .forEach(expanded::add);
+        return List.copyOf(expanded);
+    }
+
     private Wallet findAndValidateWallet(Long walletId, User user) {
         Wallet wallet = walletRepository.findById(walletId)
                 .orElseThrow(() -> new IllegalArgumentException("Ví không tồn tại"));
@@ -406,14 +468,52 @@ public class BudgetService {
         return wallet;
     }
 
-    private void ensureNoDuplicate(Long userId, Category category, Wallet wallet,
+    private void ensureNoDuplicate(Long userId, List<Category> categories, Budget.BudgetScope scope,
+                                   Budget.PeriodType periodType,
                                    LocalDate startDate, LocalDate endDate, Long excludeId) {
-        Long categoryId = category != null ? category.getId() : null;
-        Long walletId = wallet != null ? wallet.getId() : null;
-        budgetRepository.findDuplicateBudget(userId, categoryId, walletId, startDate, endDate, excludeId)
-                .ifPresent(existing -> {
-                    throw new IllegalArgumentException("Ngân sách cùng danh mục, ví và khoảng thời gian đã tồn tại. Vui lòng cập nhật ngân sách cũ.");
-                });
+        if (scope == Budget.BudgetScope.ALL_CATEGORIES) {
+            if (budgetRepository.countActiveBudgetsForPeriod(
+                    userId, periodType, startDate, endDate, excludeId) > 0) {
+                throw new IllegalArgumentException(
+                        "Kỳ này đã có ngân sách. Không thể tạo thêm ngân sách cho tất cả danh mục.");
+            }
+            return;
+        }
+
+        if (budgetRepository.countAllCategoryBudgetsForPeriod(
+                userId, periodType, startDate, endDate, excludeId) > 0) {
+            throw new IllegalArgumentException(
+                    "Kỳ này đã có ngân sách áp dụng cho tất cả danh mục.");
+        }
+
+        List<Long> selectedIds = categories.stream().map(Category::getId).toList();
+        List<Long> conflictingIds = budgetRepository.findConflictingCategoryIds(
+                userId, selectedIds, periodType, startDate, endDate, excludeId);
+        if (!conflictingIds.isEmpty()) {
+            String names = categories.stream()
+                    .filter(category -> conflictingIds.contains(category.getId()))
+                    .map(Category::getName)
+                    .collect(Collectors.joining(", "));
+            throw new IllegalArgumentException(
+                    "Các danh mục đã có ngân sách trong cùng kỳ: " + names);
+        }
+    }
+
+    private Set<Long> selectedCategoryIds(Budget budget) {
+        Set<Long> ids = budget.getCategories() == null
+                ? new LinkedHashSet<>()
+                : budget.getCategories().stream()
+                        .map(Category::getId)
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (ids.isEmpty() && budget.getCategory() != null) {
+            ids.add(budget.getCategory().getId());
+        }
+        return ids;
+    }
+
+    private List<Long> categoryFilterIds(Budget budget) {
+        Set<Long> ids = selectedCategoryIds(budget);
+        return ids.isEmpty() ? List.of(-1L) : List.copyOf(ids);
     }
 
     private Budget findUserBudget(Long id, User user) {
@@ -428,7 +528,7 @@ public class BudgetService {
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy người dùng"));
     }
 
-    private record BudgetInput(Category category, Wallet wallet,
+    private record BudgetInput(List<Category> categories, Wallet wallet,
                                Budget.BudgetScope scope, Budget.WalletScope walletScope,
                                Budget.PeriodType periodType, Budget.RepeatType repeatType,
                                LocalDate startDate, LocalDate endDate) {

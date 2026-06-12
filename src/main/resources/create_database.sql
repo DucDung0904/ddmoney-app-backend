@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS budgets (
     category_key BIGINT GENERATED ALWAYS AS (COALESCE(category_id, -1)) STORED,
     wallet_key BIGINT GENERATED ALWAYS AS (COALESCE(wallet_id, -1)) STORED,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_budget_identity (user_id, category_key, wallet_key, start_date, end_date, active),
+    INDEX idx_budget_duplicate_check (user_id, category_id, period_type, start_date, end_date, active),
     INDEX idx_budgets_user_active (user_id, active),
     INDEX idx_budgets_period (user_id, start_date, end_date),
     INDEX idx_budgets_category (category_id),
@@ -224,8 +224,8 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 UPDATE budgets SET start_date = COALESCE(start_date, STR_TO_DATE(CONCAT(year, '-', LPAD(month, 2, '0'), '-01'), '%Y-%m-%d')) WHERE month IS NOT NULL AND year IS NOT NULL;
 UPDATE budgets SET end_date = COALESCE(end_date, LAST_DAY(start_date)) WHERE start_date IS NOT NULL;
 UPDATE budgets SET start_date = COALESCE(start_date, CURDATE()), end_date = COALESCE(end_date, CURDATE());
--- Backfill category_id from legacy budget_categories. If one old budget had many categories,
--- keep the first category and use new single-category budget semantics.
+-- Keep category_id as a legacy first-category pointer. The full selection remains
+-- in budget_categories and is restored below after the join table is available.
 SET @ddl = IF(
     (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budget_categories') > 0,
     'UPDATE budgets b SET category_id = COALESCE(category_id, (SELECT MIN(bc.category_id) FROM budget_categories bc WHERE bc.budget_id = b.id))',
@@ -249,7 +249,10 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @ddl = IF((SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budgets' AND COLUMN_NAME = 'wallet_key') = 0, 'ALTER TABLE budgets ADD COLUMN wallet_key BIGINT GENERATED ALWAYS AS (COALESCE(wallet_id, -1)) STORED', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-SET @ddl = IF((SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budgets' AND INDEX_NAME = 'uk_budget_identity') = 0, 'CREATE UNIQUE INDEX uk_budget_identity ON budgets(user_id, category_key, wallet_key, start_date, end_date, active)', 'SELECT 1');
+SET @ddl = IF((SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budgets' AND INDEX_NAME = 'uk_budget_identity') > 0, 'DROP INDEX uk_budget_identity ON budgets', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl = IF((SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budgets' AND INDEX_NAME = 'idx_budget_duplicate_check') = 0, 'CREATE INDEX idx_budget_duplicate_check ON budgets(user_id, category_id, period_type, start_date, end_date, active)', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @ddl = IF((SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'transactions' AND INDEX_NAME = 'idx_transactions_budget_calc') = 0, 'CREATE INDEX idx_transactions_budget_calc ON transactions(user_id, type, date, category_id, wallet_id)', 'SELECT 1');
@@ -271,6 +274,135 @@ CREATE TABLE IF NOT EXISTS budget_categories (
     FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE,
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO budget_categories (budget_id, category_id)
+SELECT id, category_id
+FROM budgets
+WHERE category_id IS NOT NULL;
+
+DROP TRIGGER IF EXISTS trg_budgets_prevent_duplicate_insert;
+DROP TRIGGER IF EXISTS trg_budgets_prevent_duplicate_update;
+DROP TRIGGER IF EXISTS trg_budget_categories_prevent_duplicate_insert;
+DROP TRIGGER IF EXISTS trg_budget_categories_prevent_duplicate_update;
+
+DELIMITER //
+
+CREATE TRIGGER trg_budget_categories_prevent_duplicate_insert
+BEFORE INSERT ON budget_categories
+FOR EACH ROW
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM budgets new_budget
+        JOIN budgets existing_budget
+          ON existing_budget.user_id = new_budget.user_id
+         AND existing_budget.period_type = new_budget.period_type
+         AND existing_budget.start_date = new_budget.start_date
+         AND existing_budget.end_date = new_budget.end_date
+         AND existing_budget.active = TRUE
+         AND existing_budget.id <> new_budget.id
+        JOIN budget_categories existing_category
+          ON existing_category.budget_id = existing_budget.id
+         AND existing_category.category_id = NEW.category_id
+        WHERE new_budget.id = NEW.budget_id
+          AND new_budget.active = TRUE
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Danh muc nay da co ngan sach trong cung ky';
+    END IF;
+END//
+
+CREATE TRIGGER trg_budget_categories_prevent_duplicate_update
+BEFORE UPDATE ON budget_categories
+FOR EACH ROW
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM budgets new_budget
+        JOIN budgets existing_budget
+          ON existing_budget.user_id = new_budget.user_id
+         AND existing_budget.period_type = new_budget.period_type
+         AND existing_budget.start_date = new_budget.start_date
+         AND existing_budget.end_date = new_budget.end_date
+         AND existing_budget.active = TRUE
+         AND existing_budget.id <> new_budget.id
+        JOIN budget_categories existing_category
+          ON existing_category.budget_id = existing_budget.id
+         AND existing_category.category_id = NEW.category_id
+        WHERE new_budget.id = NEW.budget_id
+          AND new_budget.active = TRUE
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Danh muc nay da co ngan sach trong cung ky';
+    END IF;
+END//
+
+CREATE TRIGGER trg_budgets_prevent_duplicate_insert
+BEFORE INSERT ON budgets
+FOR EACH ROW
+BEGIN
+    IF NEW.active = TRUE
+       AND NEW.scope = 'ALL_CATEGORIES'
+       AND EXISTS (
+           SELECT 1
+           FROM budgets existing_budget
+           WHERE existing_budget.active = TRUE
+             AND existing_budget.user_id = NEW.user_id
+             AND existing_budget.period_type = NEW.period_type
+             AND existing_budget.start_date = NEW.start_date
+             AND existing_budget.end_date = NEW.end_date
+       )
+    THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Ky nay da co ngan sach';
+    END IF;
+END//
+
+CREATE TRIGGER trg_budgets_prevent_duplicate_update
+BEFORE UPDATE ON budgets
+FOR EACH ROW
+BEGIN
+    IF NEW.active = TRUE
+       AND (
+           (
+               NEW.scope = 'ALL_CATEGORIES'
+               AND EXISTS (
+                   SELECT 1
+                   FROM budgets existing_budget
+                   WHERE existing_budget.id <> OLD.id
+                     AND existing_budget.active = TRUE
+                     AND existing_budget.user_id = NEW.user_id
+                     AND existing_budget.period_type = NEW.period_type
+                     AND existing_budget.start_date = NEW.start_date
+                     AND existing_budget.end_date = NEW.end_date
+               )
+           )
+           OR (
+               NEW.scope = 'CATEGORY'
+               AND EXISTS (
+                   SELECT 1
+                   FROM budget_categories selected_category
+                   JOIN budget_categories existing_category
+                     ON existing_category.category_id = selected_category.category_id
+                    AND existing_category.budget_id <> OLD.id
+                   JOIN budgets existing_budget
+                     ON existing_budget.id = existing_category.budget_id
+                    AND existing_budget.active = TRUE
+                    AND existing_budget.user_id = NEW.user_id
+                    AND existing_budget.period_type = NEW.period_type
+                    AND existing_budget.start_date = NEW.start_date
+                    AND existing_budget.end_date = NEW.end_date
+                   WHERE selected_category.budget_id = OLD.id
+               )
+           )
+       )
+    THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Danh muc nay da co ngan sach trong cung ky';
+    END IF;
+END//
+
+DELIMITER ;
 
 -- ============================================================
 -- Category migration: allow emoji sequences and icon keys.

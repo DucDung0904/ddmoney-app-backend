@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 public class BudgetDto {
@@ -24,6 +25,7 @@ public class BudgetDto {
         @DecimalMin(value = "0.01", message = "Số tiền ngân sách phải lớn hơn 0")
         private BigDecimal amount;
 
+        // Legacy single-category field. New clients should send categoryIds.
         private Long categoryId;
         private Long walletId;
         private Budget.BudgetScope scope;
@@ -34,8 +36,9 @@ public class BudgetDto {
         private LocalDate startDate;
         private LocalDate endDate;
 
-        // Legacy fields from the current mobile app.
+        // Multi-category selection used by the current mobile app.
         private List<Long> categoryIds;
+        // Legacy month/year fields retained for older clients.
         private Integer month;
         private Integer year;
     }
@@ -97,11 +100,22 @@ public class BudgetDto {
             this.month = budget.getMonth();
             this.year = budget.getYear();
 
-            Category category = budget.getCategory();
-            if (category != null) {
-                this.categoryId = category.getId();
-                this.categoryName = category.getName();
-                this.categories = List.of(CategoryDto.Response.from(category));
+            List<Category> selectedCategories = budget.getCategories() == null
+                    ? List.of()
+                    : budget.getCategories().stream()
+                            .sorted(Comparator.comparing(
+                                    Category::getSortOrder,
+                                    Comparator.nullsLast(Integer::compareTo)
+                            ).thenComparing(Category::getName))
+                            .toList();
+            Category legacyCategory = budget.getCategory();
+            Category primaryCategory = selectedCategories.isEmpty() ? legacyCategory : selectedCategories.get(0);
+            if (primaryCategory != null) {
+                this.categoryId = primaryCategory.getId();
+                this.categoryName = primaryCategory.getName();
+                this.categories = selectedCategories.isEmpty()
+                        ? List.of(CategoryDto.Response.from(primaryCategory))
+                        : selectedCategories.stream().map(CategoryDto.Response::from).toList();
             } else {
                 this.categoryName = "Tất cả danh mục";
                 this.categories = List.of();

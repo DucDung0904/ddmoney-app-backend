@@ -9,6 +9,7 @@ import com.dung.ddmoney.dto.UserResponse;
 import com.dung.ddmoney.entity.User;
 import com.dung.ddmoney.repository.UserRepository;
 import com.dung.ddmoney.service.GoogleAuthService;
+import io.jsonwebtoken.ExpiredJwtException;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -131,6 +132,53 @@ public class AuthController {
             } catch (Exception ex) {}
             Map<String, String> response = new HashMap<>();
             response.put("message", "Authentication failed: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+        }
+    }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refreshAccessToken(@RequestBody Map<String, String> request) {
+        String refreshToken = request != null ? request.get("refreshToken") : null;
+        if (refreshToken == null || refreshToken.trim().isEmpty()) {
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Refresh token is required");
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        try {
+            String email = jwtUtil.extractUsername(refreshToken);
+            UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+
+            if (!jwtUtil.validateToken(refreshToken, userDetails)) {
+                Map<String, String> response = new HashMap<>();
+                response.put("message", "Invalid refresh token");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+            }
+
+            User user = userRepository.findByEmail(email).orElse(null);
+            if (user == null) {
+                Map<String, String> response = new HashMap<>();
+                response.put("message", "User not found");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+            }
+
+            if (!user.isEnabled()) {
+                Map<String, String> response = new HashMap<>();
+                response.put("message", "Account is disabled");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+            }
+
+            Map<String, String> response = new HashMap<>();
+            response.put("accessToken", jwtUtil.generateToken(userDetails));
+            response.put("refreshToken", jwtUtil.generateRefreshToken(userDetails));
+            return ResponseEntity.ok(response);
+        } catch (ExpiredJwtException e) {
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Refresh token expired");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+        } catch (Exception e) {
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "Invalid refresh token");
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
         }
     }

@@ -1,6 +1,7 @@
 package com.dung.ddmoney.repository;
 
 import com.dung.ddmoney.entity.Budget;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,33 +15,36 @@ import java.util.Optional;
 public interface BudgetRepository extends JpaRepository<Budget, Long> {
 
     @Query("""
-            SELECT b FROM Budget b
+            SELECT DISTINCT b FROM Budget b
             WHERE b.user.id = :userId
               AND b.active = true
               AND b.startDate <= :endDate
               AND b.endDate >= :startDate
             ORDER BY b.startDate DESC, b.name ASC
             """)
+    @EntityGraph(attributePaths = {"categories", "category", "wallet"})
     List<Budget> findActiveByUserAndPeriodOverlap(@Param("userId") Long userId,
                                                    @Param("startDate") LocalDate startDate,
                                                    @Param("endDate") LocalDate endDate);
 
     @Query("""
-            SELECT b FROM Budget b
+            SELECT DISTINCT b FROM Budget b
             WHERE b.user.id = :userId
               AND b.active = true
               AND :date BETWEEN b.startDate AND b.endDate
             ORDER BY b.startDate DESC, b.name ASC
             """)
+    @EntityGraph(attributePaths = {"categories", "category", "wallet"})
     List<Budget> findCurrentActiveBudgets(@Param("userId") Long userId,
                                            @Param("date") LocalDate date);
 
     @Query("""
-            SELECT b FROM Budget b
+            SELECT DISTINCT b FROM Budget b
             WHERE b.user.id = :userId
               AND b.active = true
             ORDER BY b.startDate DESC, b.name ASC
             """)
+    @EntityGraph(attributePaths = {"categories", "category", "wallet"})
     List<Budget> findByUserIdAndActiveTrueOrderByStartDateDescNameAsc(@Param("userId") Long userId);
 
     @Query("""
@@ -49,25 +53,58 @@ public interface BudgetRepository extends JpaRepository<Budget, Long> {
               AND b.user.id = :userId
               AND b.active = true
             """)
+    @EntityGraph(attributePaths = {"categories", "category", "wallet"})
     Optional<Budget> findActiveByIdAndUserId(@Param("budgetId") Long budgetId,
                                              @Param("userId") Long userId);
 
     @Query("""
-            SELECT b FROM Budget b
+            SELECT DISTINCT category.id FROM Budget b
+            JOIN b.categories category
             WHERE b.user.id = :userId
               AND b.active = true
               AND (:excludeId IS NULL OR b.id <> :excludeId)
-              AND ((:categoryId IS NULL AND b.category IS NULL) OR b.category.id = :categoryId)
-              AND ((:walletId IS NULL AND b.wallet IS NULL) OR b.wallet.id = :walletId)
-              AND b.startDate <= :endDate
-              AND b.endDate >= :startDate
+              AND category.id IN :categoryIds
+              AND b.periodType = :periodType
+              AND b.startDate = :startDate
+              AND b.endDate = :endDate
             """)
-    Optional<Budget> findDuplicateBudget(@Param("userId") Long userId,
-                                         @Param("categoryId") Long categoryId,
-                                         @Param("walletId") Long walletId,
-                                         @Param("startDate") LocalDate startDate,
-                                         @Param("endDate") LocalDate endDate,
-                                         @Param("excludeId") Long excludeId);
+    List<Long> findConflictingCategoryIds(@Param("userId") Long userId,
+                                          @Param("categoryIds") List<Long> categoryIds,
+                                          @Param("periodType") Budget.PeriodType periodType,
+                                          @Param("startDate") LocalDate startDate,
+                                          @Param("endDate") LocalDate endDate,
+                                          @Param("excludeId") Long excludeId);
+
+    @Query("""
+            SELECT COUNT(b) FROM Budget b
+            WHERE b.user.id = :userId
+              AND b.active = true
+              AND (:excludeId IS NULL OR b.id <> :excludeId)
+              AND b.scope = 'ALL_CATEGORIES'
+              AND b.periodType = :periodType
+              AND b.startDate = :startDate
+              AND b.endDate = :endDate
+            """)
+    long countAllCategoryBudgetsForPeriod(@Param("userId") Long userId,
+                                          @Param("periodType") Budget.PeriodType periodType,
+                                          @Param("startDate") LocalDate startDate,
+                                          @Param("endDate") LocalDate endDate,
+                                          @Param("excludeId") Long excludeId);
+
+    @Query("""
+            SELECT COUNT(b) FROM Budget b
+            WHERE b.user.id = :userId
+              AND b.active = true
+              AND (:excludeId IS NULL OR b.id <> :excludeId)
+              AND b.periodType = :periodType
+              AND b.startDate = :startDate
+              AND b.endDate = :endDate
+            """)
+    long countActiveBudgetsForPeriod(@Param("userId") Long userId,
+                                     @Param("periodType") Budget.PeriodType periodType,
+                                     @Param("startDate") LocalDate startDate,
+                                     @Param("endDate") LocalDate endDate,
+                                     @Param("excludeId") Long excludeId);
 
     // Compatibility for existing mobile calls that still request budgets by month/year.
     default List<Budget> findByUserIdAndMonthAndYear(Long userId, Integer month, Integer year) {

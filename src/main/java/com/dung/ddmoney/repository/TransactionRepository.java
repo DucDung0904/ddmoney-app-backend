@@ -109,10 +109,14 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     @Query("""
             SELECT COALESCE(SUM(t.amount), 0)
             FROM Transaction t
+            LEFT JOIN t.category category
+            LEFT JOIN category.parent parent
             WHERE t.user.id = :userId
               AND t.type = :type
               AND t.date BETWEEN :startDate AND :endDate
-              AND (:categoryId IS NULL OR t.category.id = :categoryId)
+              AND (:allCategories = true
+                   OR category.id IN :categoryIds
+                   OR parent.id IN :categoryIds)
               AND (:walletId IS NULL OR t.wallet.id = :walletId)
               AND (:walletId IS NOT NULL OR (t.wallet.isActive = true AND t.wallet.isArchived = false))
             """)
@@ -120,15 +124,20 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
                                    @Param("type") Transaction.TransactionType type,
                                    @Param("startDate") LocalDate startDate,
                                    @Param("endDate") LocalDate endDate,
-                                   @Param("categoryId") Long categoryId,
+                                   @Param("categoryIds") List<Long> categoryIds,
+                                   @Param("allCategories") boolean allCategories,
                                    @Param("walletId") Long walletId);
 
     @Query("""
             SELECT t FROM Transaction t
+            LEFT JOIN t.category category
+            LEFT JOIN category.parent parent
             WHERE t.user.id = :userId
               AND t.type = :type
               AND t.date BETWEEN :startDate AND :endDate
-              AND (:categoryId IS NULL OR t.category.id = :categoryId)
+              AND (:allCategories = true
+                   OR category.id IN :categoryIds
+                   OR parent.id IN :categoryIds)
               AND (:walletId IS NULL OR t.wallet.id = :walletId)
               AND (:walletId IS NOT NULL OR (t.wallet.isActive = true AND t.wallet.isArchived = false))
             ORDER BY t.date DESC, t.createdAt DESC
@@ -137,26 +146,32 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
                                             @Param("type") Transaction.TransactionType type,
                                             @Param("startDate") LocalDate startDate,
                                             @Param("endDate") LocalDate endDate,
-                                            @Param("categoryId") Long categoryId,
+                                            @Param("categoryIds") List<Long> categoryIds,
+                                            @Param("allCategories") boolean allCategories,
                                             @Param("walletId") Long walletId);
 
     @Query("""
-            SELECT t.category.id, t.category.name, t.category.icon, t.category.colorHex, COALESCE(SUM(t.amount), 0)
+            SELECT category.id, category.name, category.icon, category.colorHex, COALESCE(SUM(t.amount), 0)
             FROM Transaction t
+            LEFT JOIN t.category category
+            LEFT JOIN category.parent parent
             WHERE t.user.id = :userId
               AND t.type = :type
               AND t.date BETWEEN :startDate AND :endDate
-              AND (:categoryId IS NULL OR t.category.id = :categoryId)
+              AND (:allCategories = true
+                   OR category.id IN :categoryIds
+                   OR parent.id IN :categoryIds)
               AND (:walletId IS NULL OR t.wallet.id = :walletId)
               AND (:walletId IS NOT NULL OR (t.wallet.isActive = true AND t.wallet.isArchived = false))
-            GROUP BY t.category.id, t.category.name, t.category.icon, t.category.colorHex
+            GROUP BY category.id, category.name, category.icon, category.colorHex
             ORDER BY COALESCE(SUM(t.amount), 0) DESC
             """)
     List<Object[]> sumExpenseGroupByCategoryForBudget(@Param("userId") Long userId,
                                                       @Param("type") Transaction.TransactionType type,
                                                       @Param("startDate") LocalDate startDate,
                                                       @Param("endDate") LocalDate endDate,
-                                                      @Param("categoryId") Long categoryId,
+                                                      @Param("categoryIds") List<Long> categoryIds,
+                                                      @Param("allCategories") boolean allCategories,
                                                       @Param("walletId") Long walletId);
 
     @Query("""
