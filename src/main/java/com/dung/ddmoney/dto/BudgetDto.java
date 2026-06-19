@@ -26,6 +26,7 @@ public class BudgetDto {
         private BigDecimal amount;
 
         // Legacy single-category field. New clients should send categoryIds.
+        @Deprecated
         private Long categoryId;
         private Long walletId;
         private Budget.BudgetScope scope;
@@ -39,7 +40,9 @@ public class BudgetDto {
         // Multi-category selection used by the current mobile app.
         private List<Long> categoryIds;
         // Legacy month/year fields retained for older clients.
+        @Deprecated
         private Integer month;
+        @Deprecated
         private Integer year;
     }
 
@@ -48,13 +51,17 @@ public class BudgetDto {
         private Long id;
         private String name;
         private BigDecimal amount;
+        @Deprecated
         private BigDecimal budgetAmount;
         private BigDecimal spentAmount;
         private BigDecimal remainingAmount;
         private Float percentUsed;
+        @Deprecated
         private Float percentage;
         private Budget.BudgetStatus status;
+        @Deprecated
         private Long categoryId;
+        @Deprecated
         private String categoryName;
         private Long walletId;
         private String walletName;
@@ -64,8 +71,11 @@ public class BudgetDto {
         private Budget.RepeatType repeatType;
         private LocalDate startDate;
         private LocalDate endDate;
+        @Deprecated
         private Integer month;
+        @Deprecated
         private Integer year;
+        private List<Long> categoryIds = new ArrayList<>();
         private List<CategoryDto.Response> categories = new ArrayList<>();
 
         public static Response from(Budget budget, BigDecimal spentAmount) {
@@ -116,9 +126,11 @@ public class BudgetDto {
                 this.categories = selectedCategories.isEmpty()
                         ? List.of(CategoryDto.Response.from(primaryCategory))
                         : selectedCategories.stream().map(CategoryDto.Response::from).toList();
+                this.categoryIds = this.categories.stream().map(CategoryDto.Response::getId).toList();
             } else {
                 this.categoryName = "Tất cả danh mục";
                 this.categories = List.of();
+                this.categoryIds = List.of();
             }
 
             Wallet wallet = budget.getWallet();
